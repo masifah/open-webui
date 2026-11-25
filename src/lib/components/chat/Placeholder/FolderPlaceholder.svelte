@@ -22,13 +22,14 @@
 		NO_STATUS,
 		NO_PRIORITY,
 		statusDefs,
+		groupedStatusDefs,
 		priorityDefs,
 		priorityKey,
 		isChatUnread,
 		type FolderUser,
 		type FolderStatus,
 		type FolderPriority,
-		type CustomStatus,
+		type StatusEntry,
 		type StatusDef,
 		type CanEditChat,
 		type FolderActivity,
@@ -261,6 +262,29 @@
 		}
 	};
 
+	// Folded groups are remembered per folder and grouping.
+	const COLLAPSED = 'folder-workspace-collapsed';
+	let collapsed: Record<string, Record<string, boolean>> = (() => {
+		try {
+			return JSON.parse(localStorage.getItem(COLLAPSED) ?? '{}') ?? {};
+		} catch {
+			return {};
+		}
+	})();
+	const toggleCollapsed = (by: GroupBy, id: string) => {
+		if (!folder?.id) return;
+		const key = `${folder.id}:${by}`;
+		const { [id]: folded, ...rest } = collapsed[key] ?? {};
+		const next = folded ? rest : { ...rest, [id]: true };
+		const { [key]: _, ...others } = collapsed;
+		collapsed = Object.keys(next).length ? { ...others, [key]: next } : others;
+		try {
+			localStorage.setItem(COLLAPSED, JSON.stringify(collapsed));
+		} catch {
+			/* Storage is optional. */
+		}
+	};
+
 	// Built-in plus folder-defined statuses, shared with rows, cards and menus.
 	let defs: StatusDef[] = statusDefs(null, (key) => key);
 	const defsStore = writable<StatusDef[]>(defs);
@@ -300,22 +324,43 @@
 		}
 	}
 
-	async function saveStatuses(custom: CustomStatus[]) {
+	// A reorder changes no chat, so it skips the reload.
+	async function saveStatuses(statuses: StatusEntry[], reload = true) {
 		if (!folder?.id) return;
 		const folderId = folder.id;
 		const updated = await updateFolderById(localStorage.token, folderId, {
-			meta: { statuses: custom }
+			meta: { statuses }
 		});
 		if (!updated) return;
 		updateFolderDetails(folderId, updated);
 		selectedFolder.update((current) =>
 			current?.id === folderId ? { ...current, ...updated } : current
 		);
+		if (!reload) return;
 		const valid = new Set(statusDefs(updated.meta, (key) => key).map((item) => item.id));
 		statusFilter = statusFilter.filter((id) => valid.has(id));
 		markFolderChatsDirty(folderId);
 		await tick();
 		await load();
+	}
+
+	// Board columns dragged into a new order; statuses the filter hides keep their places.
+	async function reorderStatuses(ids: string[]) {
+		const order = groupedStatusDefs(folder?.meta, (key) => key);
+		const moved = ids.filter((id) => order.some((item) => item.id === id));
+		const byId = new Map(order.map((item) => [item.id, item]));
+		let index = 0;
+		const next = order.map((item) => (moved.includes(item.id) ? byId.get(moved[index++])! : item));
+		try {
+			await saveStatuses(
+				next.map(({ id, name, glyph, color, icon }) =>
+					id === NO_STATUS ? { id: NO_STATUS } : { id, name, glyph, color, icon }
+				),
+				false
+			);
+		} catch (error) {
+			toast.error(String(error));
+		}
 	}
 
 	let currentFolderId = '';
@@ -371,14 +416,9 @@
 		_deps?: unknown
 	): Group[] {
 		if (by === 'status') {
-			const defined = statusDefs(folder?.meta, t).filter(
-				(status) => !statusFilter.length || statusFilter.includes(status.id)
-			);
-			// Grouped views put "No status" last, like "Untagged" and "Read".
-			return [
-				...defined.filter((status) => status.id !== NO_STATUS),
-				...defined.filter((status) => status.id === NO_STATUS)
-			].map((status) => ({ id: status.id, label: status.name, status: status.id }));
+			return groupedStatusDefs(folder?.meta, t)
+				.filter((status) => !statusFilter.length || statusFilter.includes(status.id))
+				.map((status) => ({ id: status.id, label: status.name, status: status.id }));
 		}
 		if (by === 'priority') {
 			const defined = priorityDefs(t).filter(
@@ -1811,6 +1851,7 @@
 		{:else if view === 'board'}
 			<FolderBoard
 				onAddStatus={readOnly || columnsBy !== 'status' ? null : () => (showStatuses = true)}
+				onReorder={readOnly || columnsBy !== 'status' ? null : reorderStatuses}
 				columns={boardColumns}
 				rows={boardRows}
 				{rowOf}
@@ -1824,6 +1865,8 @@
 				onPriority={prioritize}
 				onDrop={update}
 				onTagsChange={changed}
+				collapsed={collapsed[`${folder?.id}:${rowsBy}`] ?? {}}
+				onCollapse={(id) => toggleCollapsed(rowsBy, id)}
 			/>
 		{:else}
 			<ChatList
@@ -1836,9 +1879,15 @@
 				onMove={move}
 				onPriority={prioritize}
 				onTagsChange={changed}
+				collapsed={collapsed[`${folder?.id}:${grouping}`] ?? {}}
+				onCollapse={(id) => toggleCollapsed(grouping, id)}
 			/>
 		{/if}
 	</div>
 </section>
 
-<FolderStatusesModal bind:show={showStatuses} statuses={defs} onSave={saveStatuses} />
+<FolderStatusesModal
+	bind:show={showStatuses}
+	statuses={groupedStatusDefs(folder?.meta, (key) => $i18n.t(key))}
+	onSave={saveStatuses}
+/>

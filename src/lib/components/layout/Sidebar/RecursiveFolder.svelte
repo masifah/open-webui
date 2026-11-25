@@ -46,7 +46,7 @@
 	} from '$lib/stores/folderStates';
 	import { pendingChatRequest } from '$lib/stores/chatCache';
 	import { refreshFolderChatLists } from '$lib/stores/chatList';
-	import { sortFolders } from '$lib/utils/folders';
+	import { hasDirectory, sortFolders } from '$lib/utils/folders';
 	import { updateNoteFolderIdById } from '$lib/apis/notes';
 	import { createNoteHandler } from '$lib/components/notes/utils';
 	import dayjs from '$lib/dayjs';
@@ -549,6 +549,7 @@
 				}
 			}
 			dispatch('update');
+			return true;
 		}
 	};
 
@@ -709,6 +710,7 @@
 		if (res) {
 			toast.success($i18n.t('Folder created successfully'));
 			dispatch('update');
+			return true;
 		}
 	};
 </script>
@@ -963,6 +965,8 @@
 								showFolderModal = true;
 							}}
 							onDelete={() => {
+								// Closing a directory is not a reason to lose its chats.
+								deleteFolderContents = !hasDirectory(Object.values(folders), folderId);
 								showDeleteConfirm = true;
 							}}
 							onExport={() => {
@@ -1053,6 +1057,7 @@
 									<ChatItem
 										id={chat.id}
 										title={chat.title}
+										{folderId}
 										createdAt={chat.created_at}
 										updatedAt={chat.updated_at}
 										lastReadAt={chat.last_read_at}

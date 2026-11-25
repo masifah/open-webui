@@ -20,6 +20,8 @@ export type CustomStatus = {
 	icon?: string;
 };
 export type StatusDef = CustomStatus & { custom: boolean };
+/** An entry of meta.statuses: a folder status, or `{ id: NO_STATUS }` marking where "No status" sits. */
+export type StatusEntry = CustomStatus | { id: typeof NO_STATUS };
 
 // Ready-made statuses offered as suggestions when adding statuses; folders start with none.
 export const suggestedStatuses: CustomStatus[] = [
@@ -57,6 +59,20 @@ export const statusDefs = (
 	{ id: NO_STATUS, name: t('No status'), custom: false },
 	...customStatuses(meta).map((item) => ({ ...item, custom: true }))
 ];
+
+// Grouped views follow the folder's order; a `{ id: 'none' }` entry in meta.statuses places
+// "No status", which otherwise goes last. The server already skips that entry.
+export const groupedStatusDefs = (
+	meta: { statuses?: unknown } | null | undefined,
+	t: (key: string) => string
+): StatusDef[] => {
+	const [none, ...custom] = statusDefs(meta, t);
+	const statuses = Array.isArray(meta?.statuses) ? meta.statuses : [];
+	const marker = statuses.findIndex((item) => item?.id === NO_STATUS);
+	const at =
+		marker < 0 ? custom.length : customStatuses({ statuses: statuses.slice(0, marker) }).length;
+	return [...custom.slice(0, at), none, ...custom.slice(at)];
+};
 
 // Priorities are fixed, most urgent first. A chat's priority is null when it has none;
 // 'none' is only the key for that group, column and filter, like NO_STATUS.
@@ -139,6 +155,14 @@ export const sortFolders = <T extends { id: string; name?: string }>(
 			})
 	);
 };
+
+/** Whether a folder, or one inside it, is on a directory. */
+export const hasDirectory = (folders: any[], id: string): boolean =>
+	folders.some(
+		(folder) =>
+			(folder.id === id && !!folder.directory) ||
+			(folder.parent_id === id && hasDirectory(folders, folder.id))
+	);
 
 export const isChatUnread = (chat: WorkspaceChat) =>
 	(chat.last_read_at ?? 0) === 0 || chat.updated_at > (chat.last_read_at ?? 0);
